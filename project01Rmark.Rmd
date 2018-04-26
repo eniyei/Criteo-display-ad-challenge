@@ -183,6 +183,7 @@ describe(train300_log)
 ```{r}
 # Dealing with imputation. kNN for some reason doesn't work
 imputedData <- knnImputation(train300_copy[,c(-1,-2)], k = 3)
+imputedData <- knnImputation(train300_copy[,c(-1,-2)], k = 30)
 # Error: Column indexes must be at most 1 if positive, not 39517, 6223, 100944
 # suggestions from Internet don't seem to help
 
