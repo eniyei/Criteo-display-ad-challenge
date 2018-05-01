@@ -1,0 +1,504 @@
+
+
+# Display Advertising Challenge
+(https://www.kaggle.com/c/criteo-display-ad-challenge/data)
+
+The data was no longer available at the speciefied link
+
+I was able to find it from Criteo.
+(http://labs.criteo.com/2014/02/kaggle-display-advertising-challenge-dataset/)
+
+I suspect it is not the exact data set used for the challenge because of the number, oder, name of the variables. It consists of more than 46M rows. I used random sampling to obtain 300000 rows of data. /with respect to my available resources/
+
+About the data
+Data fields
+Label - Target variable that indicates if an ad was clicked (1) or not (0).
+I1-I13 - A total of 13 columns of integer features (mostly count features).
+C1-C26 - A total of 26 columns of categorical features. The values of these features have been hashed onto 32 bits for anonymization purposes. 
+The semantic of the features is undisclosed.
+ 
+When a value is missing, the field is empty.
+
+Until I know more about how to deal with the hashed values I would leave them out from the analysis. /"Hash functions may output the same value for different inputs" - To me that doesn't speak accuracy in the calculations. But as I said. I will pay attention to that later.  
+
+I plan to use Logistic regression for this task.  
+
+```{r cache = T, message = F, warning = F}
+
+library(readr)
+# load data
+train300 <- read_csv("C://Users/Public/Documents/Tiharis R/train300.csv", col_names = FALSE)[,1:13]
+
+
+for (i in c(2:ncol(train300))) {
+      train300[,i] <- as.numeric(as.integer(as.character(unlist(train300[,i]))))
+}
+
+# Removing allegedly a categorical variable that left.
+train300$X10 <- NULL
+
+# train300$X1 <- as.factor(train300$X1)
+
+```
+# EDA
+```{r cache = T, message = F, warning = F}
+summary(train300)
+```
+
+From the summary I see that all the variables are heavily skewed to the right. Mean, Median difference is huge. I see many missing values, so I'll plot them to see whether there is a pattern or something that might speak up. The data resides above the 3rd quartile meaning that 75% of the data is less than the number corespoding to the 3rd quartile. In context of the variable I can't speak, so I can't take any well-argumented decisions. I may treat these extreme high data points as are or bin the variable. I also think about the NA's - for some variables missing values may make sense. For that they should be treated accordingly. We'll see. What I also notice is the same extreme value '511156000' in variables X6, X8, X11 and X13. The same is with X3 and X4 '87552397' and X5 and X7 '98237733'. There is a class bias for the response varbiable X1.  I may sample more balanced data for the model but we'll see. 
+
+```{r cache = T, message = F, warning = F}
+
+# I will get in numerical form the skewness and the kurtosis
+library(psych)
+describe(train300)
+```
+I plan to log transform the data in order to reduce the skew. Too much skewness will mess up the statistical techinques. 
+
+```{r cache = T, message = F, warning = F}
+
+library(Amelia)
+# plot NA's
+missmap(train300)
+# missing values in percentage
+round(sapply(train300, function(x) sum(length(which(is.na(x))))) / nrow(train300),3)*100
+```
+After seeing the missing NA's plot I decide to remove my attention from the variables X12 and X13. Imputing any numbers would lead to creating data insead of invastigating it. I see monotone missing data pattern - when a value is missing in a column it continuos to be missing in the next column. That might be a bit misleading because of the condensed plot. Probably X11 will go away as well but first I will investigate it further. The imputation I'm considering is k-NN /k nearest neighbor/.But we'll see.
+
+```{r cache = T, message = F, warning = F}
+
+# Copy data
+train300_copy <-  train300
+```
+# Histograms
+
+```{r cache = T, message = F, warning = F, fig.width= 10, fig.height = 12,fig.align="center"}
+
+par(mfrow = c(6, 2))
+par(cex = 0.6)
+# I will do log transformation of the variables in order to see their distribution a little bit better.
+hist(log(train300_copy$X13+1),breaks=80)
+rug(jitter(log(train300_copy$X13+1)))
+hist(log(train300_copy$X12+1),breaks=80)
+rug(jitter(log(train300_copy$X12+1)))
+hist(log(train300_copy$X11+1),breaks=80)
+rug(jitter(log(train300_copy$X11+1)))
+hist(log(train300_copy$X9+1),breaks=80)
+rug(jitter(log(train300_copy$X9+1)))
+hist(log(train300_copy$X8+1),breaks=80)
+rug(jitter(log(train300_copy$X8+1)))
+hist(log(train300_copy$X8+1),breaks=80)
+rug(jitter(log(train300_copy$X8+1)))
+hist(log(train300_copy$X6+1),breaks=80)
+rug(jitter(log(train300_copy$X6+1)))
+hist(log(train300_copy$X5+1),breaks=80)
+rug(jitter(log(train300_copy$X5+1)))
+hist(log(train300_copy$X4+1),breaks=80)
+rug(jitter(log(train300_copy$X4+1)))
+hist(log(train300_copy$X3+3),breaks=80)
+rug(jitter(log(train300_copy$X3+1)))
+hist(log(train300_copy$X2+3),breaks=80)
+rug(jitter(log(train300_copy$X2+3)))
+
+
+```
+
+# Boxplots
+```{r cache = T, message = F, warning = F, fig.align="center"}
+
+# yet another way of seeing the distribution and the variability of the variables
+boxplot(train300, main = "Boxplot of not transformed variables")
+boxplot(log(train300[,-1]+3),main = "Boxplot of log-transformed variables")
+
+```
+Schould I treat the extreme observations as outliers or not? They represent 25% of the data. That perhaps shouldn't be ignored.
+
+```{r cache = T, message = F, warning = F}
+
+# Removing the last 3 variables from the analysis because of too much missing data 
+train300_copy$X13 <- NULL
+train300_copy$X12 <- NULL
+train300_copy$X11 <- NULL
+```
+
+
+```{r cache = T, message = F, warning = F}
+
+# Find the mode for every variable
+MODE <- function(dataframe){
+            DF <- as.data.frame(dataframe)
+            
+            MODE2 <- function(x){      
+                  if (is.numeric(x) == FALSE){
+                        df <- as.data.frame(table(x))  
+                        df <- df[order(df$Freq), ]         
+                        m <- max(df$Freq)        
+                        MODE1 <- as.vector(as.character(subset(df, Freq == m)[, 1]))
+                        
+                        if (sum(df$Freq)/length(df$Freq)==1){
+                              warning("No Mode: Frequency of all values is 1", call. = FALSE)
+                        }else{
+                              return(MODE1)
+                        }
+                        
+                  }else{ 
+                        df <- as.data.frame(table(x))  
+                        df <- df[order(df$Freq), ]         
+                        m <- max(df$Freq)        
+                        MODE1 <- as.vector(as.numeric(as.character(subset(df, Freq == m)[, 1])))
+                        
+                        if (sum(df$Freq)/length(df$Freq)==1){
+                              warning("No Mode: Frequency of all values is 1", call. = FALSE)
+                        }else{
+                              return(MODE1)
+                        }
+                  }
+            }
+            
+            return(as.vector(lapply(DF, MODE2)))
+      }
+# Display the mode of every variable
+as.data.frame(MODE(train300_copy))
+```
+I am considering an option to separate the variables at their mode and thus making them categorical ones. I can't yet decide whether to do it with 2 levels or 3 or 4.. or leave them as they are
+```{r cache = T, message = F, warning = F}
+# How many missing values for each variable 
+sapply(train300_copy,function(x) sum(is.na(x)))
+# how many unique values for each variable
+sapply(train300_copy, function(x) length(unique(x)))
+```
+I will idetify the veriables with zero variance   
+freqCut: looks at the ratio of the most common value to the second most common value 
+uniqueCut: percentage of distinct values out of the number of total samples  
+the percent of unique values, the number of unique values divided by the total number of samples (times 100)
+
+library(caret)
+nearZeroVar(train300_copy, names = TRUE, freqCut = 19, uniqueCut = 10)
+nearZeroVar(train300_copy, names = TRUE, freqCut = 2, uniqueCut = 20)
+X1, X6, X9
+
+I'll keep those variables in mind.    
+# Imputation
+I may also try the default setting for the number of multiple imputations `m`, which is 5.  
+`maxit` - the number of iterations which is again 5. But for large sample size 10 and up may give better results. I will do it for now with low settings  
+```{r cache = T, message = F, warning = F}
+# Imputing data with predictive mean matching
+library(mice)
+imputedData300 <- mice(train300_copy, m=2, maxit = 5, method = 'pmm', seed = 500)
+# I will chose the second dataset and combine it with the original data 
+train300_copy_imputed <- complete(imputedData300, 2)
+# Check for NA's 
+anyNA(train300_copy_imputed)
+# Compare summary statistics
+summary(train300_copy)
+summary(train300_copy_imputed)
+```
+The summary comparison reveals to what extent I influenced the variables. Some of them remain solid, some are influenced a bit, In my oppinion it is quite survivable. I plan to use both imputed data sets to compare their performance.
+# Log transform
+```{r cache = T, message = F, warning = F}
+# Copy the imputed data
+train300_copy_imputed_log <- train300_copy_imputed
+# Transform every variable but the response variable
+train300_copy_imputed_log[,-1] <- log(train300_copy_imputed_log[, -1] + 3)
+summary(train300_copy_imputed_log)
+# Change names accordingly
+names(train300_copy_imputed_log) <- paste0(names(train300_copy_imputed_log), "_log")
+names(train300_copy_imputed_log)[names(train300_copy_imputed_log) == "X1_log"] <- "X1"
+```
+
+# Split data
+I will randomly reorder the data and then split it into train and test sets.
+
+```{r cache = T, message = F, warning = F}
+# Shuffle rows
+shuf <- sample(nrow(train300_copy_imputed_log))
+# Randomly order data
+train300_copy_imputed_log <- train300_copy_imputed_log[shuf,]
+# Identify row to split on
+split <- round(nrow(train300_copy_imputed_log) * .80)
+# Create train
+train_train300_copy_imputed_log <- train300_copy_imputed_log[1:split,]
+# Create test
+test_train300_copy_imputed_log <- train300_copy_imputed_log[(split + 1):nrow(train300_copy_imputed_log), ]
+# check splitting
+nrow(train_train300_copy_imputed_log)/nrow(train300_copy_imputed_log)
+str(train_train300_copy_imputed_log)
+```
+# Model building
+```{r cache = T, message = F, warning = F}
+# 1 glm model
+LogModel1 <- glm(X1 ~ ., data = train_train300_copy_imputed_log, family = binomial)
+summary(LogModel1)
+# 2 glm model
+LogModel2 <- glm(X1 ~ . - X2_log, data = train_train300_copy_imputed_log, family = binomial)
+summary(LogModel2)
+
+# 3 glm model /whitout the near zero variance variables one at a time/
+LogModel3 <- glm(X1 ~ . - X2_log - X9_log, data = train_train300_copy_imputed_log, family = binomial)
+summary(LogModel3)
+# 4 glm model /whitout the near zero variance variables one at a time/
+LogModel4 <- glm(X1 ~ . - X2_log - X9_log -X6_log, data = train_train300_copy_imputed_log, family = binomial)
+summary(LogModel4)
+
+```
+The interpretation of the coefficients will be a challenge for me, because the glm model gives the coefficients in the log odds scale and I already took the natural log of them.but I'll give it a try. For variables X3_log to X7_log I see decrease from
+The log odds ratio associated with a 2.72 fold change in the predictor. By just looking at the sign of the estimates I may say that which one has positive or negative affect on the response variable X1 which represents whether the add was clicked on or not. I will show the LogModel2 in odds scale for hopefully easier interpretation. For variables X3_log to X7_log I see assosiated decrease in the odds of Click.
+for example: X3_log would be interpreted as: each additional log unit of variable X3_log is assosiated with 3.4% decrease in the odds of Click.
+The difference between the null deviance and the residual deviance is not big. It would mean/when there is a bigger gap/ that variables add value to the model.
+
+```{r cache = T, message = F, warning = F}
+# Coefficients and their CI of LogModel2 in the ddds scale
+exp(cbind(Odds = coef(LogModel2), confint(LogModel2)))
+```
+Here I see that no coefficients in the odds scale crosses zero which indicates to me that all of the variables have to some extent, even small one/ influence one the response variable. Apart from X8_log and X9_log that have a tiny positive influence all other remaining variables have a negative one.  
+# AIC comparison
+Comparing models by their Akaike Information Criterion - evaluating the quality of the model
+```{r cache = T, message = F, warning = F}
+# AIC comparison
+AIC(LogModel1,LogModel2,LogModel3,LogModel4)
+```
+Model 2 is better. I will continue with it. 
+  
+# Predictions
+```{r cache = T, message = F, warning = F}
+# prediction
+p <- predict(LogModel2, test_train300_copy_imputed_log, type = "response")
+# set prediction probability for the model
+p_class <- ifelse(p > 0.2, 1, 0)
+# create confusion matrix
+table(predicted = p_class, actual = test_train300_copy_imputed_log$X1)
+# estimate the accuracy of the model
+mean(p_class == test_train300_copy_imputed_log$X1)
+```
+If I set the cutoff value to be 0.20 I would get more clicks but with less certanty than if I set it to 0.6.
+```{r cache = T, message = F, warning = F}
+# set prediction probability for the model
+p_class <- ifelse(p > 0.6, 1, 0)
+# create confusion matrix
+table(predicted = p_class, actual = test_train300_copy_imputed_log$X1)
+# estimate the accuracy of the model
+mean(p_class == test_train300_copy_imputed_log$X1)
+
+```
+
+# ROC curve and AUC
+I will draw a ROC curve and see the possible cutoff point as welll as the overall performance of the model across these thresholds.
+
+```{r cache = T, message = F, warning = F}
+library(caTools)
+# Draw a ROC curve
+colAUC(p, test_train300_copy_imputed_log$X1, plotROC = T)
+
+```
+I would choose to set the threshold a bit over the average probability of success
+
+```{r cache = T, message = F, warning = F}
+# Check once again the average prop of clicks
+mean(test_train300_copy_imputed_log$X1)
+# I decide to leave it at 0.26
+p_class <- ifelse(p > 0.26, 1, 0)
+# create confusion matrix
+table(predicted = p_class, actual = test_train300_copy_imputed_log$X1)
+# estimate the accuracy of the model
+mean(p_class == test_train300_copy_imputed_log$X1)
+
+```
+
+# Performance
+
+
+```{r cache = T, message = F, warning = F}
+
+sensitivity <-  8350 / (8350 + 16150 )
+specificity <-  28578 / (28578 + 6922)
+sensitivity
+specificity
+```
+The model correctly identifies 34% of the clicks
+The model correctly identifies 81% of no clicks
+
+
+
+```{r cache = T, message = F, warning = F}
+# McFadden R2 index can be used to assess the model fit
+library(pscl)
+pR2(LogModel2)
+
+```
+Well, now I am confused.
+# Second imputed dataset model
+```{r cache = T, message = F, warning = F}
+# GLM for both of the imputed data set
+ModelIIset <- with(imputedData300, glm(X1 ~ ., data = train_train300_copy_imputed_log, family = binomial))
+summary(ModelIIset)
+
+```
+Both of the imputed datasets yield the same results in respect of the significance of the variables.
+
+
+
+
+# Cor plot
+```{r cache = T, message = F, warning = F}
+# correlation
+library(corrplot)
+correlations_o <- round(cor(train300_copy, use = "complete.obs",method = "spearman"),2)
+corrplot(correlations_o, method = "number")
+correlations_i <- round(cor(train300_copy_imputed, method = "spearman"),2)
+corrplot(correlations_i, method = "number")
+correlations_il <- round(cor(log(train300_copy_imputed_log),method = "spearman"),2)
+corrplot(correlations_il, method = "number")
+```
+
+
+```{r cache = T, message = F, warning = F}
+
+pl <- plot(train300_copy_imputed_log, col=rgb(0,0,0,40,maxColorValue=255) , pch = 16)
+pl
+```
+
+************************************
+# Caret package
+I would like to train the model using the `caret` package as well.
+```{r cache = T, message = F, warning = F}
+# Copy data
+caret300 <- train300_copy
+# Delete variables with many NA's
+caret300$X13 <- NULL
+caret300$X12 <- NULL
+caret300$X11 <- NULL
+# Rename response variable
+names(caret300)[names(caret300) == 'X1'] <- 'Class'
+# Make the response variabel a factor
+caret300$Class <- as.factor(caret300$Class)
+# Renane
+library(plyr)
+caret300$Class <- mapvalues(caret300$Class, from = c("0", "1"), to = c("N", "C"))
+# Create more balanced data in order the model to learn better.
+library(dplyr)
+caret300_b <- caret300 %>%
+              group_by(Class) %>%
+              sample_n(75000)
+
+caret300_b[,-1] <- log(caret300_b[,-1] + 3)
+
+str(caret300_b)
+```
+
+
+
+```{r cache = T, message = F, warning = F}
+# Shuffle data
+rows <- sample(nrow(caret300_b))
+
+# Randomly order data
+caret300_b <- caret300_b[rows,]
+
+# Identify row to split on: split
+split <- round(nrow(caret300_b) * .80)
+
+# Create train
+train <- caret300_b[1:split,]
+
+# Create test
+test <- caret300_b[(split + 1):nrow(caret300_b), ]
+
+nrow(train)/nrow(caret300_b)
+
+```
+
+
+```{r cache = T, message = F, warning = F}
+library(caret)
+myControl <- trainControl(
+  method = "cv",
+  number = 5,  # with respect to my RAM resources
+  summaryFunction = twoClassSummary,
+  classProbs = T,
+  verboseIter = TRUE
+)
+```
+
+The variables are more or less within the same scale, or it just seems to me so. But I would apply scaling within the train function as well as centering. I will as well perform cross-validation since I don't work with all the data but just a small part of it. I hope this simulation would be good enough to give an overall accurate representation.
+
+```{r cache = T, message = F, warning = F}
+model <- train(Class ~., train,
+  metric = "ROC",
+  method = "glm",
+  na.action = na.pass,
+  preProcess = c("knnImpute", "center", "scale"),
+  trControl = myControl)
+```
+
+
+
+```{r cache = T, message = F, warning = F}
+summary(model)
+
+# Dispalying the variables importance for the model. Again X2 is not of a much use.
+varImp(model)
+```
+
+
+```{r cache = T, message = F, warning = F}
+# Save predictions
+ppp <- predict(model, test,na.action = na.pass)
+
+# Construction a confusion metrix
+confusionMatrix(ppp, test$Class,positive = "C")
+```
+
+By centering and scaling the variables before training the model /despite my suspecions they being on the same scale/ the initial model has lower AIC and better accuracy and increased sensitivity. I would leave out the X2 variable for the custom scaling centering and imputation of the data and again build the model with the glm() in R.  
+
+# Custom model  
+I would impute with the median here It is not my first choice for such a skewed data , for sure, but..
+```{r cache = T, message = F, warning = F}
+caret300_b_m <- caret300_b
+caret300_b_m$X3[is.na(caret300_b_m$X3)] <- median(caret300_b_m$X3, na.rm=T)
+caret300_b_m$X4[is.na(caret300_b_m$X4)] <- median(caret300_b_m$X4, na.rm=T)
+caret300_b_m$X5[is.na(caret300_b_m$X5)] <- median(caret300_b_m$X5, na.rm=T)
+caret300_b_m$X6[is.na(caret300_b_m$X6)] <- median(caret300_b_m$X6, na.rm=T)
+caret300_b_m$X7[is.na(caret300_b_m$X7)] <- median(caret300_b_m$X7, na.rm=T)
+caret300_b_m$X8[is.na(caret300_b_m$X8)] <- median(caret300_b_m$X8, na.rm=T)
+caret300_b_m$X9[is.na(caret300_b_m$X9)] <- median(caret300_b_m$X9, na.rm=T)
+
+for (i in c(2:ncol(caret300_b_m))) {
+      caret300_b_m[,i] <- scale(caret300_b_m[,i], center = T, scale = T)
+}
+
+```
+
+
+
+
+```{r cache = T, message = F, warning = F}
+# shuffle
+rowsII <- sample(nrow(caret300_b_m))
+# reorder
+caret300_b_m <- caret300_b_m[rowsII,]
+# split 
+splitII <- round(nrow(caret300_b_m) * .80)
+# create train
+trainII <- caret300_b_m[1:splitII,]
+# create test
+testII <- caret300_b_m[(splitII + 1):nrow(caret300_b_m), ]
+```
+
+
+```{r cache = T, message = F, warning = F}
+# model
+LogKnnCSmodel <- glm(Class ~ . - X2, data = trainII, family = binomial)
+summary(LogKnnCSmodel)
+# prediction
+pII <- predict(LogKnnCSmodel, testII, type = "response")
+# set prediction probability for the model
+p_classII <- ifelse(pII > 0.5, "C", "N")
+# create confusion matrix
+confusionMatrix(factor(p_classII), testII$Class, positive = "C")
+# Draw a ROC curve
+library(caTools)
+colAUC(pII, testII$Class, plotROC = T)
+
+```
+
+
